@@ -198,7 +198,7 @@ class Stack_reframe(Stack_reframe_gmtsar):
                     count = int(azimuth_vector['line']['@count'])
                     interval = (stop_dt - start_dt).total_seconds()
                     delta = interval/counter
-                    print ('delta', delta)
+                    #print ('delta', delta)
 
                     # read line numbers
                     lines = azimuth_vector['line']['#text'].split(' ')
