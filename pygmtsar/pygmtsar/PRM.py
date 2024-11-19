@@ -15,6 +15,23 @@ class PRM(datagrid, PRM_gmtsar):
     int_types = ['num_valid_az', 'num_rng_bins', 'num_patches', 'bytes_per_line', 'good_bytes_per_line', 'num_lines','SC_identity']
 
     @staticmethod
+    def SC_timestamp(SC_clock):
+        from datetime import datetime, timedelta
+
+        # extract year and Julian day with fractional part
+        year = int(SC_clock // 1000)
+        julian_day = SC_clock % 1000  # Keep fractional part of the day
+
+        # split integer Julian day and fractional day
+        integer_julian_day = int(julian_day)
+        fractional_day = julian_day - integer_julian_day
+
+        # convert integer and fraction parts of Julian day to datetime
+        timestamp = datetime(year, 1, 1) + timedelta(days=integer_julian_day) + timedelta(days=fractional_day)
+
+        return timestamp
+
+    @staticmethod
     def to_numeric_or_original(val):
         if isinstance(val, str):
             try:
