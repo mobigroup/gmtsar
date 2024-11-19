@@ -42,8 +42,10 @@ class Stack_reframe(Stack_reframe_gmtsar):
         #import shapely
         from shapely.geometry import Point, LineString, Polygon, MultiPolygon
         from shapely.ops import cascaded_union
-        from datetime import datetime
+        from datetime import datetime, timedelta
         import os
+        import xmltodict
+        import copy
         import warnings
         warnings.filterwarnings('ignore')
 
@@ -140,6 +142,130 @@ class Stack_reframe(Stack_reframe_gmtsar):
         # update approximate location
         out['geometry'] = cascaded_union([geom for multi_polygon in df.geometry for geom in multi_polygon.geoms
                                       if geom.intersects(geometry)])
+
+        # merge calibration xml files
+
+#         # define burst size
+#         with open(df.metapath[0], 'r') as file:
+#             xml = xmltodict.parse(file.read())
+#         imageInformation = xml['product']['imageAnnotation']['imageInformation']
+#         numberOfLines = int(imageInformation['numberOfLines'])
+
+        if 'noisepath' in df and not df['noisepath'].isnull().sum():
+            # different schemes
+            tags = ['Range', '']
+            xml_files = df[f'noisepath']
+
+            startTimes = []
+            stopTimes = []
+            # collect unique range vectors only and ignore 3 duplicated before and after
+            range_vectors = {}
+            azimuth_vectors = []
+            for xml_file in xml_files:
+                with open(xml_file, 'r') as file:
+                    xml = xmltodict.parse(file.read())
+                # modify tag data without affecting 'xml'
+                noise = copy.deepcopy(xml['noise'])
+                adsHeader = noise['adsHeader']
+                startTimes.append(adsHeader['startTime'])
+                stopTimes.append(adsHeader['stopTime'])
+                # find only one included subtag
+                tag = [tag for tag in tags if f'noise{tag}VectorList' in noise]
+                assert len(tag)>0, 'ERROR: not found range noise vectors'
+                assert len(tag)==1, 'ERROR: found multiple declarations for range noise vector'
+                tag = tag[0]
+                # read multiple range vectors for unique azimuths
+                for vector in noise[f'noise{tag}VectorList'][f'noise{tag}Vector']:
+                    range_vectors[vector['azimuthTime']] = vector
+                # read one or zero azimuth vector
+                if 'noiseAzimuthVectorList' in noise:
+                    azimuth_vectors.append(noise['noiseAzimuthVectorList']['noiseAzimuthVector'])
+
+            if len(azimuth_vectors):
+                # Convert string to datetime object
+                start_dts = [datetime.strptime(dt, '%Y-%m-%dT%H:%M:%S.%f') for dt in startTimes]
+                stop_dts = [datetime.strptime(dt, '%Y-%m-%dT%H:%M:%S.%f') for dt in stopTimes]
+                overlap_dts = [(stop_dt-start_dt)/2 for stop_dt, start_dt in zip(stop_dts[:1], start_dts[1:])]
+
+                total = 0
+                total_times = []
+                total_values = []
+                azimuth_vectors_new = []
+                for start_dt, stop_dt, start_overlap_dt, stop_overlap_dt, azimuth_vector in \
+                        zip(start_dts, stop_dts, [timedelta(0)] + overlap_dts, overlap_dts + [timedelta(0)], azimuth_vectors):
+                    counter = int(azimuth_vector['lastAzimuthLine'])
+                    total += counter + 1
+                    count = int(azimuth_vector['line']['@count'])
+                    interval = (stop_dt - start_dt).total_seconds()
+                    delta = interval/counter
+                    print ('delta', delta)
+
+                    # read line numbers
+                    lines = azimuth_vector['line']['#text'].split(' ')
+                    # convert line numbers to times
+                    times = [start_dt + timedelta(seconds=(float(l) * delta)) for l in lines]
+                    # read lut values
+                    values = np.array(azimuth_vector['noiseAzimuthLut']['#text'].split(' ')).astype(float)
+
+                    # mask out items for bursts intersections
+                    start_mask = np.array(times) - times[0] >= start_overlap_dt
+                    stop_mask = times[-1] - np.array(times) >= stop_overlap_dt
+                    # filter out values for burst intersection
+                    total_times.extend(np.array(times)[start_mask & stop_mask])
+                    total_values.extend(values[start_mask & stop_mask])
+
+                # convert times to line numbers
+                total_lines = [np.round((t - start_dts[0]).total_seconds()/delta).astype(int) for t in total_times]
+
+                # modify tag data without affecting 'xml'
+                noiseAzimuthVector = copy.deepcopy(noise['noiseAzimuthVectorList']['noiseAzimuthVector'])
+                noiseAzimuthVector['lastAzimuthLine'] = total - 1
+                noiseAzimuthVector['line']['@count'] = len(total_lines)
+                noiseAzimuthVector['line']['#text'] = ' '.join(map(str, total_lines))
+                noiseAzimuthVector['noiseAzimuthLut']['@count'] = len(total_values)
+                noiseAzimuthVector['noiseAzimuthLut']['#text'] = ' '.join(map(str, total_values))
+
+            # build new xml
+            noise['adsHeader']['startTime'] = min(startTimes)
+            noise['adsHeader']['stopTime'] = max(stopTimes)
+            noise[f'noise{tag}VectorList']['@count'] = len(range_vectors)
+            noise[f'noise{tag}VectorList'][f'noise{tag}Vector'] = list(range_vectors.values())
+            if len(azimuth_vectors):
+                noise['noiseAzimuthVectorList']['noiseAzimuthVector'] = noiseAzimuthVector
+
+            # save to new xml file
+            new_xml_file = os.path.join(self.basedir, f'noise-{new_name}.xml')
+            with open(new_xml_file, 'w') as file:
+                file.write(xmltodict.unparse({'noise': noise}, pretty=True, indent='  '))
+
+            out['noisepath'] = new_xml_file
+
+        if 'calibpath' in df and not df['calibpath'].isnull().sum():
+            startTimes = []
+            stopTimes = []
+            # collect unique vectors only and ignore 3 duplicated before and after
+            calibrationVectors = {}
+            for xml_file in df.calibpath:
+                with open(xml_file, 'r') as file:
+                    xml = xmltodict.parse(file.read())
+                # modify 'calibration' without affecting 'xml'
+                calibration = copy.deepcopy(xml['calibration'])
+                adsHeader = calibration['adsHeader']
+                startTimes.append(adsHeader['startTime'])
+                stopTimes.append(adsHeader['stopTime'])
+                for calibrationVector in calibration['calibrationVectorList']['calibrationVector']:
+                    calibrationVectors[calibrationVector['azimuthTime']] = calibrationVector
+            calibration['adsHeader']['startTime'] = min(startTimes)
+            calibration['adsHeader']['stopTime'] = max(stopTimes)
+            calibration['calibrationVectorList']['@count'] = len(calibrationVectors)
+            calibration['calibrationVectorList']['calibrationVector'] = list(calibrationVectors.values())
+
+            new_xml_file = os.path.join(self.basedir, 'calibration-' + new_name + '.xml')
+            with open(new_xml_file, 'w') as file:
+                file.write(xmltodict.unparse({'calibration': calibration}, pretty=True, indent='  '))
+
+            out['calibpath'] = new_xml_file
+
         return out
 
     def compute_reframe(self, geometry=None, n_jobs=-1, queue=16, caption='Reframing', **kwargs):
