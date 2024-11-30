@@ -97,7 +97,8 @@ class IO(datagrid):
             stack_pickle = from_path
 
         print (f'NOTE: load state from file {stack_pickle}')
-        return pickle.load(open(stack_pickle, 'rb'))
+        with open(stack_pickle, 'rb') as f:
+            return pickle.load(f)
 
     def backup(self, backup_dir, copy=False, debug=False):
         """
@@ -641,18 +642,9 @@ class IO(datagrid):
             filenames = self.get_filenames(stack, name)
         #print ('filenames', filenames)
 
-        # define the proper chunk sizes
-        data0 = xr.open_dataset(filenames[0], engine=self.netcdf_engine)
-        if 'stack' in data0.dims:
-            chunksize = self.chunksize1d
-        else:
-            chunksize = self.chunksize
-        del data0
-
         data = xr.open_mfdataset(
             filenames,
             engine=self.netcdf_engine,
-            chunks=chunksize,
             parallel=True,
             concat_dim='stackvar',
             combine='nested'
@@ -664,7 +656,10 @@ class IO(datagrid):
             elif 'lat' in data.coords and 'lon' in data.coords:
                 multi_index_names = ['lat', 'lon']
             multi_index = pd.MultiIndex.from_arrays([data.y.values, data.x.values], names=multi_index_names)
-            data = data.assign_coords(stack=multi_index).set_index({'stack': ['y', 'x']})
+            data = data.assign_coords(stack=multi_index).set_index({'stack': ['y', 'x']}).chunk({'stack': self.chunksize1d})
+        else:
+            dims = list(data.dims)
+            data = data.chunk({dims[0]: 1, dims[1]: self.chunksize, dims[2]: self.chunksize})
 
         # revert dataarray converted to dataset
         data_vars = list(data.data_vars)
