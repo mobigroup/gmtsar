@@ -537,27 +537,37 @@ class ASF(tqdm_joblib):
                 adsHeader['imageNumber'] = '001'
                 noise = noise   | {'adsHeader': adsHeader}
 
-                noiseRangeVector = annotation['noiseRangeVectorList']
-                items = filter_azimuth_time(noiseRangeVector['noiseRangeVector'], start_utc_dt, stop_utc_dt)
-                # re-numerate line numbers for the burst
-                for item in items: item['line'] = str(int(item['line']) - (length * burstIndex))
-                noiseRangeVector = {'@count': len(items), 'noiseRangeVector': items}
-                noise = noise   | {'noiseRangeVectorList': noiseRangeVector}
+                if 'noiseVectorList' in annotation:
+                    noiseRangeVector = annotation['noiseVectorList']
+                    items = filter_azimuth_time(noiseRangeVector['noiseVector'], start_utc_dt, stop_utc_dt)
+                    # re-numerate line numbers for the burst
+                    for item in items: item['line'] = str(int(item['line']) - (length * burstIndex))
+                    noiseRangeVector = {'@count': len(items), 'noiseVector': items}
+                    noise = noise   | {'noiseVectorList': noiseRangeVector}
 
-                noiseAzimuthVector = annotation['noiseAzimuthVectorList']
-                items = noiseAzimuthVector['noiseAzimuthVector']['line']['#text'].split(' ')
-                items = [int(item) for item in items]
-                lowers = [item for item in items if item <= burstIndex * length] or items[0]
-                uppers = [item for item in items if item >= (burstIndex + 1) * length - 1] or items[-1]
-                mask = [True if item>=lowers[-1] and item<=uppers[0] else False for item in items]
-                items = [item - burstIndex * length for item, m in zip(items, mask) if m]
-                noiseAzimuthVector['noiseAzimuthVector']['firstAzimuthLine'] = lowers[-1] - burstIndex * length
-                noiseAzimuthVector['noiseAzimuthVector']['lastAzimuthLine'] = uppers[0] - burstIndex * length
-                noiseAzimuthVector['noiseAzimuthVector']['line'] = {'@count': len(items), '#text': ' '.join([str(item) for item in items])}
-                items = noiseAzimuthVector['noiseAzimuthVector']['noiseAzimuthLut']['#text'].split(' ')
-                items = [item for item, m in zip(items, mask) if m]
-                noiseAzimuthVector['noiseAzimuthVector']['noiseAzimuthLut'] = {'@count': len(items), '#text': ' '.join(items)}
-                noise = noise   | {'noiseAzimuthVectorList': noiseAzimuthVector}
+                if 'noiseRangeVectorList' in annotation:
+                    noiseRangeVector = annotation['noiseRangeVectorList']
+                    items = filter_azimuth_time(noiseRangeVector['noiseRangeVector'], start_utc_dt, stop_utc_dt)
+                    # re-numerate line numbers for the burst
+                    for item in items: item['line'] = str(int(item['line']) - (length * burstIndex))
+                    noiseRangeVector = {'@count': len(items), 'noiseRangeVector': items}
+                    noise = noise   | {'noiseRangeVectorList': noiseRangeVector}
+
+                if 'noiseAzimuthVectorList' in annotation:
+                    noiseAzimuthVector = annotation['noiseAzimuthVectorList']
+                    items = noiseAzimuthVector['noiseAzimuthVector']['line']['#text'].split(' ')
+                    items = [int(item) for item in items]
+                    lowers = [item for item in items if item <= burstIndex * length] or items[0]
+                    uppers = [item for item in items if item >= (burstIndex + 1) * length - 1] or items[-1]
+                    mask = [True if item>=lowers[-1] and item<=uppers[0] else False for item in items]
+                    items = [item - burstIndex * length for item, m in zip(items, mask) if m]
+                    noiseAzimuthVector['noiseAzimuthVector']['firstAzimuthLine'] = lowers[-1] - burstIndex * length
+                    noiseAzimuthVector['noiseAzimuthVector']['lastAzimuthLine'] = uppers[0] - burstIndex * length
+                    noiseAzimuthVector['noiseAzimuthVector']['line'] = {'@count': len(items), '#text': ' '.join([str(item) for item in items])}
+                    items = noiseAzimuthVector['noiseAzimuthVector']['noiseAzimuthLut']['#text'].split(' ')
+                    items = [item for item, m in zip(items, mask) if m]
+                    noiseAzimuthVector['noiseAzimuthVector']['noiseAzimuthLut'] = {'@count': len(items), '#text': ' '.join(items)}
+                    noise = noise   | {'noiseAzimuthVectorList': noiseAzimuthVector}
 
                 with open(xml_noise_file, 'w') as file:
                     file.write(xmltodict.unparse({'noise': noise}, pretty=True, indent='  '))
