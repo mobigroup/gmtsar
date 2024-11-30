@@ -52,7 +52,7 @@ class Stack_reframe(Stack_reframe_gmtsar):
         # define line covering some bursts to crop them
         if isinstance(geometry, (gpd.GeoDataFrame, gpd.GeoSeries)):
             # it does not work with numpy 2.0.0 for geometry.minimum_rotated_rectangle
-            geometry = geometry.unary_union
+            geometry = geometry.union_all()
         assert not geometry is None, f'ERROR: subswath {subswath} is not covered, you need to exclude it.'
 
         # convert to polygon when possible
@@ -311,7 +311,7 @@ class Stack_reframe(Stack_reframe_gmtsar):
         dates = self.df.index.unique().values
         subswaths = self.get_subswaths()
         # approximate subswath geometries from GCP
-        geometries = {subswath: self.df[self.df.subswath==subswath].geometry.unary_union for subswath in subswaths}
+        geometries = {subswath: self.df[self.df.subswath==subswath].geometry.union_all() for subswath in subswaths}
 
         records = []
         # Applying iterative processing to prevent Dask scheduler deadlocks.

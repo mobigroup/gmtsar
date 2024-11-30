@@ -359,7 +359,7 @@ class Stack_align(Stack_dem):
         from tqdm.auto import tqdm
         import joblib
         import warnings
-        # supress warnings about unary_union future behaviour to replace None by empty collection 
+        # supress warnings about unary_union/union_all() future behaviour to replace None by empty collection
         warnings.filterwarnings('ignore')
 
         if joblib_aligning_backend is not None:
@@ -396,7 +396,7 @@ class Stack_align(Stack_dem):
                                             'noisepath': lambda p: list(p),
                                             'calibpath': lambda p: list(p),
                                             'orbitpath': 'min',
-                                            'geometry': lambda g: g.unary_union
+                                            'geometry': lambda g: g.union_all()
                                            })
         # update the main object for the merged subswaths
         self.df = gpd.GeoDataFrame(df)
