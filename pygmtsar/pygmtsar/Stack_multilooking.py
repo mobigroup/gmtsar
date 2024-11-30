@@ -76,9 +76,10 @@ class Stack_multilooking(Stack_phasediff):
             warnings.filterwarnings('ignore')
             warnings.filterwarnings('ignore', module='dask')
             warnings.filterwarnings('ignore', module='dask.core')
-            # iunstack data if needed
+            # unstack data if needed
             if 'stack' in da.dims:
-                da = da.unstack('stack')
+                # .unstack() is too slow on lazy grids in some of Xarray/Dask versions
+                da = da.compute().unstack('stack')
             # workaround for Google Colab when we cannot save grids with x,y coordinate names
             # also supports geographic coordinates
             yname = [varname for varname in ['y', 'lat', 'a'] if varname in da.dims][0]
