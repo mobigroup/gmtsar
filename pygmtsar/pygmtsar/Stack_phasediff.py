@@ -70,7 +70,7 @@ class Stack_phasediff(Stack_topo):
                 data = data.sel(y=slice(bounds[1], bounds[3]), x=slice(bounds[0], bounds[2]))
             intensity = np.square(np.abs(data))
             # Gaussian filtering 200m cut-off wavelength with optional range multilooking on Sentinel-1 amplitudes
-            amp_look = self.multilooking(intensity, wavelength=wavelength, coarsen=coarsen, debug=debug)
+            intensity_look = self.multilooking(intensity, wavelength=wavelength, coarsen=coarsen, debug=debug)
             del intensity
             # calculate phase difference with topography correction
             phasediff = self.phasediff(chunk, data, phase=phase, method=method, joblib_backend=joblib_backend, debug=debug)
@@ -80,8 +80,8 @@ class Stack_phasediff(Stack_topo):
                                                wavelength=wavelength, coarsen=coarsen, debug=debug)
             del phasediff
             # correlation with optional range decimation
-            corr_look = self.correlation(phasediff_look, amp_look, debug=debug)
-            del amp_look
+            corr_look = self.correlation(phasediff_look, intensity_look, debug=debug)
+            del intensity_look
             if psize is not None:
                 # Goldstein filter in psize pixel patch size on square grid cells produced using 1:4 range multilooking
                 phasediff_look_goldstein = self.goldstein(phasediff_look, corr_look, psize, debug=debug)
@@ -93,6 +93,14 @@ class Stack_phasediff(Stack_topo):
                 # convert complex phase difference to interferogram 
                 intf_look = self.interferogram(phasediff_look, debug=debug)
             del phasediff_look
+
+            # filter out not valid pixels
+            if weight is not None:
+                weight_look = self.multilooking(weight, wavelength=None, coarsen=coarsen, debug=debug)
+                intf_look = intf_look.where(np.isfinite(weight_look))
+                corr_look = corr_look.where(np.isfinite(weight_look))
+                del weight_look
+
             # compute together because correlation depends on phase, and filtered phase depends on correlation.
             #tqdm_dask(result := dask.persist(decimator(corr15m), decimator(intf15m)), desc='Compute Phase and Correlation')
             # unpack results for a single interferogram
