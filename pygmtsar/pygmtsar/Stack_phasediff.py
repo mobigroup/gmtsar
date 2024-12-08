@@ -719,7 +719,7 @@ class Stack_phasediff(Stack_topo):
             data = data.unstack('stack')
 
         # multi-plots ineffective for linked lazy data
-        fg = data.plot.imshow(
+        fg = self.wrap(data).plot.imshow(
             col='pair',
             col_wrap=cols, size=size, aspect=aspect,
             vmin=-np.pi, vmax=np.pi, cmap='gist_rainbow_r'
