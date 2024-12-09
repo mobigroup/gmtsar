@@ -145,7 +145,7 @@ class Stack_detrend(Stack_unwrap):
 #         return model
 
     @staticmethod
-    def regression(data, variables, weight=None, valid_pixels_threshold=1000, **kwargs):
+    def regression(data, variables, weight=None, wrap=False, valid_pixels_threshold=1000, **kwargs):
         """
         topo = sbas.get_topo().coarsen({'x': 4}, boundary='trim').mean()
         yy, xx = xr.broadcast(topo.y, topo.x)
@@ -183,7 +183,6 @@ class Stack_detrend(Stack_unwrap):
         #print ('chunk2d', chunk2d)
     
         def regression_block(data, weight, *args, **kwargs):
-            #assert 0, stack.shape
             data_values  = data.ravel().astype(np.float64)
             # manage variable number of variables
             variables_stack = np.stack([arg[0] if arg.ndim==3 else arg for arg in args])
@@ -209,7 +208,16 @@ class Stack_detrend(Stack_unwrap):
                 del data_values, variables_values, weight_values
                 del nanmask_data, nanmask_values, nanmask_weight, nanmask
                 return np.nan * np.zeros(data.shape)
-    
+
+            # Prepare target Y for regression
+            if wrap:
+                # Convert angles to sine and cosine as (N,2) -> (sin, cos) matrix
+                Y = np.column_stack([np.sin(data_values), np.cos(data_values)])
+            else:
+                # Just use data values as (N,1) matrix
+                Y = data_values.reshape(-1, 1)
+            del data_values
+
             # build prediction model with or without plane removal (fit_intercept)
             algorithm = kwargs.pop('algorithm', 'linear')
             if algorithm == 'sgd':
@@ -220,14 +228,25 @@ class Stack_detrend(Stack_unwrap):
                 fit_params = {'linearregression__sample_weight': weight_values[~nanmask]} if weight.size > 1 else {}
             else:
                 raise ValueError(f"Unsupported algorithm {kwargs['algorithm']}. Should be 'linear' or 'sgd'")
-            regr.fit(variables_values[:, ~nanmask].T, data_values[~nanmask], **fit_params)
-            del weight_values, data_values
+
+            regr.fit(variables_values[:, ~nanmask].T, Y[~nanmask], **fit_params)
+            del weight_values, Y
+
+            # Predict for all valid pixels
+            model_pred = regr.predict(variables_values[:, ~nanmask_values].T)
+            del regr
+
             model = np.full_like(data, np.nan).ravel()
-            model[~nanmask_values] = regr.predict(variables_values[:, ~nanmask_values].T)
-            del variables_values, regr
+            if wrap:
+                # (N,2) -> (sin, cos)
+                model[~nanmask_values] = np.arctan2(model_pred[:, 0], model_pred[:, 1])
+            else:
+                # (N,1), just flatten
+                model[~nanmask_values] = model_pred.ravel()
+            del variables_values, model_pred
             del nanmask_data, nanmask_values, nanmask_weight, nanmask
             return model.reshape(data.shape).astype(np.float32)
-    
+
         dshape = data[0].shape if data.ndim==3 else data.shape
         if isinstance(variables, (list, tuple)):
             vshapes = [v[0].shape if v.ndim==3 else v.shape for v in variables]
@@ -241,7 +260,7 @@ class Stack_detrend(Stack_unwrap):
             if not {vshape} == {dshape}:
                 print (f'NOTE: shapes of variables slice {vshape} and data slice {dshape} differ.')
             variables_stack = [variables.reindex_like(data).chunk(dict(y=chunk2d[0], x=chunk2d[1]))]
-    
+
         if weight is not None:
             if not weight.shape == data.shape:
                 print (f'NOTE: shapes of weight {weight.shape} and data {data.shape} differ.')
@@ -261,6 +280,7 @@ class Stack_detrend(Stack_unwrap):
             dask_gufunc_kwargs={**kwargs},
         )
         del variables_stack
+
         return model
 
     def regression_linear(self, data, variables, weight=None, valid_pixels_threshold=1000, fit_intercept=True):
@@ -319,11 +339,11 @@ class Stack_detrend(Stack_unwrap):
         return self.regression(data, variables, weight, valid_pixels_threshold, algorithm='sgd',
                                max_iter=max_iter, tol=tol, alpha=alpha, l1_ratio=l1_ratio)
 
-    def polyfit(self, data, weight=None, degree=0, days=None, count=None):
+    def polyfit(self, data, weight=None, degree=0, days=None, count=None, wrap=False):
         print ('NOTE: Function is deprecated. Use Stack.regression_pairs() instead.')
-        return self.regression_pairs(data=data, weight=weight, degree=degree, days=days, count=count)
+        return self.regression_pairs(data=data, weight=weight, degree=degree, days=days, count=count, wrap=wrap)
 
-    def regression_pairs(self, data, weight=None, degree=0, days=None, count=None):
+    def regression_pairs(self, data, weight=None, degree=0, days=None, count=None, wrap=False):
         import xarray as xr
         import pandas as pd
         import numpy as np
@@ -344,41 +364,94 @@ class Stack_detrend(Stack_unwrap):
         else:
             if 'stack' in weight.dims and isinstance(weight.coords['stack'].to_index(), pd.MultiIndex):
                 raise ValueError('ERROR: "weight", if provided, must be stacked consistently with "data".')
-                
+
         pairs, dates = self.get_pairs(data, dates=True)
 
         models = []
+        if wrap:
+            models_sin = []
+            models_cos = []
+
         for date in dates:
-            #print ('date', date)
             data_pairs = pairs[(pairs.ref==date)|(pairs.rep==date)].pair.values
-            #print ('data_pairs', data_pairs)
             if weight is None:
                 stack = data.sel(pair=data_pairs)
             else:
                 stack = data.sel(pair=data_pairs) * np.sqrt(weight.sel(pair=data_pairs))
+            del data_pairs
+
             stack_days = xr.where(stack.ref < pd.Timestamp(date),
                            (stack.ref - stack.rep).dt.days,
                            (stack.rep - stack.ref).dt.days)
-            #print ('stack_days', stack_days)
             # select smallest intervals
             stack_days_selected = stack_days[np.argsort(np.abs(stack_days.values))][:count]
             if days is not None:
                 stack_days_selected = stack_days_selected[np.abs(stack_days_selected)<=days]
-            #print ('stack_days_selected', stack_days_selected)
-            linear_fit = (np.sign(stack_days)*stack).assign_coords(time=stack_days)\
+
+            selected_pairs = (np.sign(stack_days)*stack).assign_coords(time=stack_days)\
                 [stack.pair.isin(stack_days_selected.pair)]\
                 .swap_dims({'pair': 'time'})\
-                .sortby(['ref', 'rep'])\
-                .polyfit(dim='time', deg=degree)
-            model = linear_fit.polyfit_coefficients.sel(degree=degree).astype(np.float32)
-            models.append(model.assign_coords(date=pd.to_datetime(date)))
-            del data_pairs, stack, stack_days, stack_days_selected, linear_fit, model
-        model = xr.concat(models, dim='date')
-        del models
+                .sortby(['ref', 'rep'])
+            del stack, stack_days, stack_days_selected
 
-        out = xr.concat([(model.sel(date=ref).drop('date') - model.sel(date=rep).drop('date'))\
-                                 .assign_coords(pair=str(ref.date()) + ' ' + str(rep.date()), ref=ref, rep=rep) \
-                          for ref, rep in zip(pairs['ref'], pairs['rep'])], dim='pair').rename(data.name)
+            if not wrap:
+                linear_fit = selected_pairs.polyfit(dim='time', deg=degree)
+                model = linear_fit.polyfit_coefficients.sel(degree=degree).astype(np.float32)
+                models.append(model.assign_coords(date=pd.to_datetime(date)))
+                del model, linear_fit
+            else:
+                # fit sine and cosine components
+                linear_fit_sin = np.sin(selected_pairs).polyfit(dim='time', deg=degree)
+                linear_fit_cos = np.cos(selected_pairs).polyfit(dim='time', deg=degree)
+
+                model_sin = linear_fit_sin.polyfit_coefficients.sel(degree=degree).astype(np.float32)
+                model_cos = linear_fit_cos.polyfit_coefficients.sel(degree=degree).astype(np.float32)
+
+                models_sin.append(model_sin.assign_coords(date=pd.to_datetime(date)))
+                models_cos.append(model_cos.assign_coords(date=pd.to_datetime(date)))
+                del model_sin, model_cos, linear_fit_sin, linear_fit_cos
+
+            del selected_pairs
+
+        if not wrap:
+            model = xr.concat(models, dim='date')
+            del models
+            out = xr.concat(
+                [
+                    (model.sel(date=ref).drop('date') - model.sel(date=rep).drop('date'))
+                    .assign_coords(pair=str(ref.date()) + ' ' + str(rep.date()), ref=ref, rep=rep)
+                    for ref, rep in zip(pairs['ref'], pairs['rep'])
+                ],
+                dim='pair'
+            ).rename(data.name)
+        else:
+            # combine separate sin and cos models
+            model_sin = xr.concat(models_sin, dim='date')
+            model_cos = xr.concat(models_cos, dim='date')
+            del models_sin, models_cos
+
+            angle_diffs = []
+            for ref, rep in zip(pairs['ref'], pairs['rep']):
+                sin_ref = model_sin.sel(date=ref).drop('date')
+                cos_ref = model_cos.sel(date=ref).drop('date')
+                sin_rep = model_sin.sel(date=rep).drop('date')
+                cos_rep = model_cos.sel(date=rep).drop('date')
+
+                # compute angle differences using sin/cos difference formula
+                # sin(A−B) = sin A * cos B − cos A * sin B
+                sin_diff = sin_ref * cos_rep - cos_ref * sin_rep
+                # cos(A−B) = cos A * cos B+ sin A * sin B
+                cos_diff = cos_ref * cos_rep + sin_ref * sin_rep
+                del sin_ref, cos_ref, sin_rep, cos_rep
+
+                angle_diff = np.arctan2(sin_diff, cos_diff)\
+                             .assign_coords(pair=str(ref.date()) + ' ' + str(rep.date()), ref=ref, rep=rep)
+                angle_diffs.append(angle_diff)
+                del angle_diff, sin_diff, cos_diff
+
+            out = xr.concat(angle_diffs, dim='pair').rename(data.name)
+            del angle_diffs
+
         if multi_index is not None:
             return out.assign_coords(stack=multi_index)
         return out
