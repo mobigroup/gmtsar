@@ -441,7 +441,7 @@ class Stack_unwrap(Stack_unwrap_snaphu):
         
         # xarray wrapper
         input_core_dims = [['pair']]
-        args = [data.chunk(chunks)]
+        args = [self.wrap(data).chunk(chunks)]
         if weight is not None:
             # sdd another 'pair' dimension for weight
             input_core_dims.append(['pair'])
