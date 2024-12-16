@@ -14,7 +14,7 @@ from .utils import utils
 
 class Stack_phasediff(Stack_topo):
 
-    def compute_interferogram(self, pairs, name, resolution=None, weight=None, phase=None, method=None,
+    def compute_interferogram(self, pairs, name, resolution=None, weight=None, topo=None, phase=None, method=None,
                               wavelength=None, psize=None, coarsen=None, stack=None, queue=None, timeout=None,
                               skip_exist=False, joblib_backend=None, debug=False):
         import xarray as xr
@@ -46,9 +46,6 @@ class Stack_phasediff(Stack_topo):
         else:
             decimator = None
         
-        if weight is not None:
-            bounds = self.get_bounds(weight)
-    
         # Applying iterative processing to prevent Dask scheduler deadlocks.
         counter = 0
         digits = len(str(len(pairs)))
@@ -67,13 +64,13 @@ class Stack_phasediff(Stack_topo):
             # load Sentinel-1 data
             data = self.open_data(dates, debug=debug)
             if weight is not None:
-                data = data.sel(y=slice(bounds[1], bounds[3]), x=slice(bounds[0], bounds[2]))
+                data = data.reindex_like(weight, fill_value=np.nan)
             intensity = np.square(np.abs(data))
             # Gaussian filtering 200m cut-off wavelength with optional range multilooking on Sentinel-1 amplitudes
             intensity_look = self.multilooking(intensity, wavelength=wavelength, coarsen=coarsen, debug=debug)
             del intensity
             # calculate phase difference with topography correction
-            phasediff = self.phasediff(chunk, data, phase=phase, method=method, joblib_backend=joblib_backend, debug=debug)
+            phasediff = self.phasediff(chunk, data, topo=topo, phase=phase, method=method, joblib_backend=joblib_backend, debug=debug)
             del data
             # Gaussian filtering 200m cut-off wavelength with optional range multilooking
             phasediff_look = self.multilooking(phasediff, weight=weight,
@@ -125,19 +122,21 @@ class Stack_phasediff(Stack_topo):
 
     # single-look interferogram processing has a limited set of arguments
     # resolution and coarsen are not applicable here
-    def compute_interferogram_singlelook(self, pairs, name, weight=None, phase=None, wavelength=None, method='nearest', psize=None,
+    def compute_interferogram_singlelook(self, pairs, name, weight=None, topo='auto', phase=None,
+                                         wavelength=None, method='nearest', psize=None,
                                          stack=None, queue=16, timeout=None,
                                          skip_exist=False, joblib_backend=None, debug=False):
-        self.compute_interferogram(pairs, name, weight=weight, phase=phase, method=method, wavelength=wavelength,
+        self.compute_interferogram(pairs, name, weight=weight, topo=topo, phase=phase, method=method, wavelength=wavelength,
                                    psize=psize, stack=stack, queue=queue, timeout=timeout,
                                    skip_exist=skip_exist, joblib_backend=joblib_backend, debug=debug)
 
     # Goldstein filter requires square grid cells means 1:4 range multilooking.
     # For multilooking interferogram we can use square grid always using coarsen = (1,4)
-    def compute_interferogram_multilook(self, pairs, name, resolution=None, weight=None, phase=None, method='nearest',
-                                        wavelength=None, psize=None, coarsen=(1,4), stack=None, queue=16, timeout=None,
+    def compute_interferogram_multilook(self, pairs, name, resolution=None, weight=None, topo='auto', phase=None,
+                                        wavelength=None, method='nearest', psize=None, coarsen=(1,4),
+                                        stack=None, queue=16, timeout=None,
                                         skip_exist=False, joblib_backend=None, debug=False):
-        self.compute_interferogram(pairs, name, resolution=resolution, weight=weight, phase=phase, method=method,
+        self.compute_interferogram(pairs, name, resolution=resolution, weight=weight, topo=topo, phase=phase, method=method,
                                    wavelength=wavelength, psize=psize, coarsen=coarsen, stack=stack, queue=queue, timeout=timeout,
                                    skip_exist=skip_exist, joblib_backend=joblib_backend, debug=debug)
 
@@ -473,10 +472,12 @@ class Stack_phasediff(Stack_topo):
 
         # interpret the topo argument as topography, otherwise, use it as topography phase
         if isinstance(topo, str) and topo == 'auto':
-            topo = utils.interp2d_like(self.get_topo(), data, method=method, kwargs={'fill_value': 'extrapolate'})
+            topo = self.get_topo()
 
         if (isinstance(topo, xr.DataArray) and topo.name=='topo'):
-            phase_topo = self.topo_phase(pairs, topo, grid=data, method=method)
+            topo_grid = utils.interp2d_like(topo, data, method=method, kwargs={'fill_value': 'extrapolate'})
+            phase_topo = self.topo_phase(pairs, topo_grid, grid=data, method=method)
+            del topo_grid
         elif (isinstance(topo, xr.DataArray) and topo.name=='phase'):
             phase_topo = topo
         else:
@@ -593,7 +594,8 @@ class Stack_phasediff(Stack_topo):
                     out[slice_i, slice_j] += filtered_window[:slice_i.stop - slice_i.start, :slice_j.stop - slice_j.start]
             return out
 
-        assert phase.shape == corr.shape, 'ERROR: phase and correlation variables have different shape'
+        assert phase.shape == corr.shape, f'ERROR: phase and correlation variables have different shape \
+                                          ({phase.shape} vs {corr.shape})'
 #         spacing = self.get_spacing(phase)
 #         #assert np.round(spacing[0]/spacing[1]) == 1, f'ERROR: grid cells should be almost square: {spacing}'
 #         if not np.round(spacing[0]/spacing[1]) == 1:
