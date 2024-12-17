@@ -287,9 +287,11 @@ class Stack_multilooking(Stack_phasediff):
             if isinstance(data, xr.Dataset):
                 for varname in data.data_vars:
                     assert data[varname].shape[1:] == weight.shape, \
-                        f'ERROR: multilooking data[{varname}] slice and weight variables have different shape'
+                        f'ERROR: multilooking data[{varname}] slice and weight variables have different shape \
+                        ({data[varname].shape[1:]} vs {weight.shape})'
             else:
-                assert data.shape[1:] == weight.shape, 'ERROR: multilooking data slice and weight variables have different shape'
+                assert data.shape[1:] == weight.shape, f'ERROR: multilooking data slice and weight variables have different shape \
+                ({data.shape[1:]} vs {weight.shape})'
 
         # process a slice of dataarray
         def process_slice(slice_data):
