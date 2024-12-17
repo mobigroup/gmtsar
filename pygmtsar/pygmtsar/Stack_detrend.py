@@ -183,7 +183,7 @@ class Stack_detrend(Stack_unwrap):
         #print ('chunk2d', chunk2d)
     
         def regression_block(data, weight, *args, **kwargs):
-            data_values  = data.ravel().astype(np.float64)
+            data_values  = data.ravel()
             # manage variable number of variables
             variables_stack = np.stack([arg[0] if arg.ndim==3 else arg for arg in args])
             #variables_values = variables_stack.reshape(-1, variables_stack.shape[0]).T
@@ -202,20 +202,20 @@ class Stack_detrend(Stack_unwrap):
                 weight_values = None
                 nanmask_weight = None
                 nanmask = nanmask_data | nanmask_values
+            del nanmask_data, nanmask_weight
     
             # regression requires enough amount of valid pixels
             if data_values.size - np.sum(nanmask) < valid_pixels_threshold:
-                del data_values, variables_values, weight_values
-                del nanmask_data, nanmask_values, nanmask_weight, nanmask
+                del data_values, variables_values, weight_values, nanmask
                 return np.nan * np.zeros(data.shape)
 
             # Prepare target Y for regression
             if wrap:
                 # Convert angles to sine and cosine as (N,2) -> (sin, cos) matrix
-                Y = np.column_stack([np.sin(data_values), np.cos(data_values)])
+                Y = np.column_stack([np.sin(data_values), np.cos(data_values)]).astype(np.float64)
             else:
                 # Just use data values as (N,1) matrix
-                Y = data_values.reshape(-1, 1)
+                Y = data_values.reshape(-1, 1).astype(np.float64)
             del data_values
 
             # build prediction model with or without plane removal (fit_intercept)
@@ -228,13 +228,14 @@ class Stack_detrend(Stack_unwrap):
                 fit_params = {'linearregression__sample_weight': weight_values[~nanmask]} if weight.size > 1 else {}
             else:
                 raise ValueError(f"Unsupported algorithm {kwargs['algorithm']}. Should be 'linear' or 'sgd'")
+            del weight_values
 
             regr.fit(variables_values[:, ~nanmask].T, Y[~nanmask], **fit_params)
-            del weight_values, Y
+            del Y, nanmask
 
             # Predict for all valid pixels
             model_pred = regr.predict(variables_values[:, ~nanmask_values].T)
-            del regr
+            del regr, variables_values
 
             model = np.full_like(data, np.nan).ravel()
             if wrap:
@@ -243,8 +244,8 @@ class Stack_detrend(Stack_unwrap):
             else:
                 # (N,1), just flatten
                 model[~nanmask_values] = model_pred.ravel()
-            del variables_values, model_pred
-            del nanmask_data, nanmask_values, nanmask_weight, nanmask
+            del model_pred, nanmask_values
+            
             return model.reshape(data.shape).astype(np.float32)
 
         dshape = data[0].shape if data.ndim==3 else data.shape
@@ -1066,10 +1067,17 @@ class Stack_detrend(Stack_unwrap):
         print ('NOTE: Function is deprecated. Use Stack.regression1d() instead.')
         return self.regression1d(data=data, dim=dim, degree=degree)
 
-    def regression1d(self, data, dim='auto', degree=1):
+    def regression1d(self, data, dim='auto', degree=1, wrap=False):
         import xarray as xr
         import pandas as pd
         import numpy as np
+
+        if wrap:
+            trend_sin = sbas.regression1d(np.sin(intf_ps), baseline_pairs.baseline)
+            trend_cos = sbas.regression1d(np.cos(intf_ps), baseline_pairs.baseline)
+            out = np.arctan2(trend_sin, trend_cos)
+            del trend_sin, trend_cos
+            return out
 
         multi_index = None
         if 'stack' in data.dims and isinstance(data.coords['stack'].to_index(), pd.MultiIndex):
@@ -1095,6 +1103,8 @@ class Stack_detrend(Stack_unwrap):
             else:
                 dim_da = xr.DataArray(dim, dims=[stackdim])
             data_dim = data.assign_coords(polyfit_coord=dim_da).swap_dims({'pair': 'polyfit_coord'})
+            
+            # fit the specified values
             # Polynomial coefficients, highest power first, see numpy.polyfit
             fit_coeff = data_dim.polyfit('polyfit_coord', degree).polyfit_coefficients.astype(np.float32)
             fit = xr.polyval(data_dim['polyfit_coord'], fit_coeff)\
@@ -1105,6 +1115,7 @@ class Stack_detrend(Stack_unwrap):
             return out
     
         # fit existing coordinate values
+        # Polynomial coefficients, highest power first, see numpy.polyfit
         fit_coeff = data.polyfit(dim, degree).polyfit_coefficients.astype(np.float32)
         fit = xr.polyval(data[dim], fit_coeff).astype(np.float32).rename('trend')
         out = xr.merge([fit, fit_coeff]).rename(polyfit_coefficients='coefficients')
