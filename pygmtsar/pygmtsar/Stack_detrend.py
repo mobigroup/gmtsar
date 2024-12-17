@@ -1072,13 +1072,6 @@ class Stack_detrend(Stack_unwrap):
         import pandas as pd
         import numpy as np
 
-        if wrap:
-            trend_sin = sbas.regression1d(np.sin(intf_ps), baseline_pairs.baseline)
-            trend_cos = sbas.regression1d(np.cos(intf_ps), baseline_pairs.baseline)
-            out = np.arctan2(trend_sin, trend_cos)
-            del trend_sin, trend_cos
-            return out
-
         multi_index = None
         if 'stack' in data.dims and isinstance(data.coords['stack'].to_index(), pd.MultiIndex):
             multi_index = data['stack']
@@ -1095,7 +1088,7 @@ class Stack_detrend(Stack_unwrap):
     
         if isinstance(dim, str) and dim == 'auto':
             dim = stackdim
-    
+
         # add new coordinate using 'dim' values
         if not isinstance(dim, str):
             if isinstance(dim, (xr.DataArray, pd.DataFrame, pd.Series)):
@@ -1104,6 +1097,22 @@ class Stack_detrend(Stack_unwrap):
                 dim_da = xr.DataArray(dim, dims=[stackdim])
             data_dim = data.assign_coords(polyfit_coord=dim_da).swap_dims({'pair': 'polyfit_coord'})
             
+        if wrap:
+            # wrap to prevent outrange
+            data = self.wrap(data)
+            # fit sine/cosine
+            trend_sin = self.regression1d(np.sin(data), dim, degree=degree, wrap=False)
+            trend_cos = self.regression1d(np.cos(data), dim, degree=degree, wrap=False)
+            # define the angle offset at zero baseline
+            trend_sin0 = xr.polyval(xr.DataArray(0, dims=[]), trend_sin.coefficients)
+            trend_cos0 = xr.polyval(xr.DataArray(0, dims=[]), trend_cos.coefficients)
+            fit = np.arctan2(trend_sin, trend_cos) - np.arctan2(trend_sin0, trend_cos0)
+            del trend_sin, trend_cos, trend_sin0, trend_cos0
+            # wrap to prevent outrange
+            return self.wrap(fit)
+
+        # add new coordinate using 'dim' values
+        if not isinstance(dim, str):
             # fit the specified values
             # Polynomial coefficients, highest power first, see numpy.polyfit
             fit_coeff = data_dim.polyfit('polyfit_coord', degree).polyfit_coefficients.astype(np.float32)
