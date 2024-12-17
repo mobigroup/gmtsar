@@ -487,7 +487,7 @@ class Stack_unwrap(Stack_unwrap_snaphu):
             assert phase.shape == weight.shape, 'ERROR: phase and weight variables have different shape'
 
         def _snaphu(ind):
-            ds = self.snaphu(phase.isel({stackvar: ind}) if stackvar is not None else phase,
+            ds = self.snaphu(self.wrap(phase.isel({stackvar: ind}) if stackvar is not None else phase),
                              weight.isel({stackvar: ind})  if stackvar is not None and weight is not None else weight,
                              conf=conf, conncomp=conncomp)
             if conncomp:
