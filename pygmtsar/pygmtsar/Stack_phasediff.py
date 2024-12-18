@@ -33,7 +33,9 @@ class Stack_phasediff(Stack_topo):
 
         if isinstance(weight, str) and weight == 'auto':
             weight = self.psfunction()
-    
+        else:
+            weight = weight.astype(np.float32).chunk(-1 if weight.chunks is None else weight.chunks)
+
         if queue is None:
             queue = self.netcdf_queue
         if queue is None:
