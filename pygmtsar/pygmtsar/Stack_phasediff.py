@@ -33,7 +33,7 @@ class Stack_phasediff(Stack_topo):
 
         if isinstance(weight, str) and weight == 'auto':
             weight = self.psfunction()
-        else:
+        elif weight is not None:
             weight = weight.astype(np.float32).chunk(-1 if weight.chunks is None else weight.chunks)
 
         if queue is None:
