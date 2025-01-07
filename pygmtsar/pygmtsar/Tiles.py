@@ -133,7 +133,8 @@ class Tiles(datagrid, tqdm_joblib):
                     with open(tile_filename, 'wb') as f:
                         f.write(response.content)
             if filetype == 'netcdf':
-                tile = xr.open_dataarray(tile_filename).load()
+                with xr.open_dataarray(tile_filename) as ds:
+                    tile = ds.load()
                 tile.attrs = {}
                 for coord in tile.coords:
                     tile.coords[coord].attrs = {}
