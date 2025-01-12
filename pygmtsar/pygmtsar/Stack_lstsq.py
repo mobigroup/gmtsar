@@ -357,7 +357,7 @@ class Stack_lstsq(Stack_tidal):
         return rmse
 
     def plot_displacement(self, data, caption='Cumulative LOS Displacement, [rad]',
-                          quantile=None, vmin=None, vmax=None, symmetrical=False, aspect=None, **kwargs):
+                          quantile=None, vmin=None, vmax=None, cmap='turbo', symmetrical=False, aspect=None, **kwargs):
         import numpy as np
         import pandas as pd
         import matplotlib.pyplot as plt
@@ -378,15 +378,22 @@ class Stack_lstsq(Stack_tidal):
             vmax =  minmax
 
         plt.figure()
-        data.plot.imshow(vmin=vmin, vmax=vmax, cmap='turbo')
+        data.plot.imshow(vmin=vmin, vmax=vmax, cmap=cmap)
         self.plot_AOI(**kwargs)
         self.plot_POI(**kwargs)
         if aspect is not None:
             plt.gca().set_aspect(aspect)
         plt.title(caption)
 
+    def plot_displacement_los_mm(self, data, caption='Cumulative LOS Displacement, [mm]',
+                           quantile=None, vmin=None, vmax=None, cmap='turbo', symmetrical=False, aspect=None, **kwargs):
+        self.plot_displacement(self.los_displacement_mm(data),
+                                caption=caption,
+                                quantile=quantile, vmin=vmin, vmax=vmax, cmap=cmap,
+                                symmetrical=symmetrical, aspect=aspect, **kwargs)
+
     def plot_displacements(self, data, caption='Cumulative LOS Displacement, [rad]', cols=4, size=4, nbins=5, aspect=1.2, y=1.05,
-                           quantile=None, vmin=None, vmax=None, symmetrical=False, **kwargs):
+                           quantile=None, vmin=None, vmax=None, cmap='turbo', symmetrical=False, **kwargs):
         import numpy as np
         import pandas as pd
         import matplotlib.pyplot as plt
@@ -410,7 +417,7 @@ class Stack_lstsq(Stack_tidal):
         fg = data.plot.imshow(
             col='date',
             col_wrap=cols, size=size, aspect=aspect,
-            vmin=vmin, vmax=vmax, cmap='turbo'
+            vmin=vmin, vmax=vmax, cmap=cmap
         )
         if self.is_ra(data):
             fg.set_axis_labels('Range', 'Azimuth')
@@ -421,10 +428,10 @@ class Stack_lstsq(Stack_tidal):
         self.plots_POI(fg, **kwargs)
 
     def plot_displacements_los_mm(self, data, caption='Cumulative LOS Displacement, [mm]', cols=4, size=4, nbins=5, aspect=1.2, y=1.05,
-                           quantile=None, vmin=None, vmax=None, symmetrical=False, **kwargs):
+                           quantile=None, vmin=None, vmax=None, cmap='turbo', symmetrical=False, **kwargs):
         self.plot_displacements(self.los_displacement_mm(data),
                                 caption=caption, cols=cols, size=size, nbins=nbins, aspect=aspect, y=y,
-                                quantile=quantile, vmin=vmin, vmax=vmax, symmetrical=symmetrical, **kwargs)
+                                quantile=quantile, vmin=vmin, vmax=vmax, cmap=cmap, symmetrical=symmetrical, **kwargs)
 
     def plot_rmse(self, data, caption='RMSE, [rad]', cmap='turbo',
                   quantile=None, vmin=None, vmax=None, symmetrical=False, **kwargs):
