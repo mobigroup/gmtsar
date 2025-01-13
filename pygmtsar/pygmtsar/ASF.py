@@ -82,7 +82,8 @@ class ASF(tqdm_joblib):
             return pd.concat(results)
 
     def download_scenes(self, basedir, scenes, subswaths, polarization='VV', session=None,
-                        n_jobs=4, joblib_backend='loky', skip_exist=True, debug=False):
+                        n_jobs=4, joblib_backend='loky', skip_exist=True,
+                        retries=30, timeout_second=3, debug=False):
         """
         Downloads the specified subswaths extracted from Sentinel-1 SLC scenes.
     
@@ -122,6 +123,7 @@ class ASF(tqdm_joblib):
         import re
         import glob
         from datetime import datetime, timedelta
+        import time
         import warnings
         # supress asf_search 'UserWarning: File already exists, skipping download'
         warnings.filterwarnings("ignore", category=UserWarning)
@@ -228,11 +230,26 @@ class ASF(tqdm_joblib):
             print ('Note: sequential joblib processing is applied when "n_jobs" is None or "debug" is True.')
             joblib_backend = 'sequential'
 
-        # download scenes
-        with self.tqdm_joblib(tqdm(desc='ASF Downloading Sentinel-1 SLC:', total=len(scenes_missed))) as progress_bar:
-            joblib.Parallel(n_jobs=n_jobs, backend=joblib_backend)(joblib.delayed(download_scene)\
-                                    (scene, subswaths, polarization, basedir, session) for scene in scenes_missed)
+        def download_scene_with_retry(scene, subswaths, polarization, basedir, session, retries, timeout_second):
+            for retry in range(retries):
+                try:
+                    download_scene(scene, subswaths, polarization, basedir, session)
+                    return True
+                except Exception as e:
+                    print(f'ERROR: download attempt {retry+1} failed for {scene}: {e}')
+                    if retry + 1 == retries:
+                        return False
+                time.sleep(timeout_second)
 
+        # download scenes
+        with self.tqdm_joblib(tqdm(desc='ASF Downloading Sentinel-1 SLC Scenes:', total=len(scenes_missed))) as progress_bar:
+            statuses = joblib.Parallel(n_jobs=n_jobs, backend=joblib_backend)(joblib.delayed(download_scene_with_retry)\
+                                    (scene, subswaths, polarization, basedir, session,
+                                    retries=retries, timeout_second=timeout_second) for scene in scenes_missed)
+
+        failed_count = statuses.count(False)
+        if failed_count > 0:
+            raise Exception(f'Scenes downloading failed for {failed_count} items.')
         # parse processed scenes and convert to dataframe
         #print ('scenes', len(scenes))
         scenes_downloaded = pd.DataFrame(scenes_missed, columns=['scene'])
@@ -621,13 +638,13 @@ class ASF(tqdm_joblib):
                 time.sleep(timeout_second)
 
         # download bursts
-        with self.tqdm_joblib(tqdm(desc='ASF Downloading Sentinel-1 Bursts', total=len(bursts_missed))) as progress_bar:
+        with self.tqdm_joblib(tqdm(desc='ASF Downloading Sentinel-1 SLC Bursts', total=len(bursts_missed))) as progress_bar:
             statuses = joblib.Parallel(n_jobs=n_jobs, backend=joblib_backend)(joblib.delayed(download_burst_with_retry)\
                                     (result, basedir, session, retries=retries, timeout_second=timeout_second) for result in results)
 
         failed_count = statuses.count(False)
         if failed_count > 0:
-            raise Exception(f'Bursts downloading failed for {failed_count} bursts.')
+            raise Exception(f'Bursts downloading failed for {failed_count} items.')
         # parse processed bursts and convert to dataframe
         bursts_downloaded = pd.DataFrame(bursts_missed, columns=['burst'])
         # return the results in a user-friendly dataframe
